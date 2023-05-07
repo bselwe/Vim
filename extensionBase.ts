@@ -162,6 +162,11 @@ export async function activate(context: vscode.ExtensionContext, handleLocal: bo
     // There is a timing issue in VSCode codebase between when the isDirty flag is set and
     // when registered callbacks are fired. https://github.com/Microsoft/vscode/issues/11339
     const contentChangeHandler = (modeHandler: ModeHandler) => {
+      modeHandler.vimState.historyTracker.lastContentChanges = {
+        changes: event.contentChanges,
+        timestamp: new Date(),
+      };
+
       if (modeHandler.vimState.currentMode === Mode.Insert) {
         if (modeHandler.vimState.historyTracker.currentContentChanges === undefined) {
           modeHandler.vimState.historyTracker.currentContentChanges = [];

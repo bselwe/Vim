@@ -378,8 +378,15 @@ class ChangeList {
   }
 }
 
+interface ILastContentChanges {
+  readonly changes: readonly vscode.TextDocumentContentChangeEvent[];
+  readonly timestamp: Date;
+}
+
 export class HistoryTracker {
   public currentContentChanges: vscode.TextDocumentContentChangeEvent[];
+
+  public lastContentChanges: ILastContentChanges | undefined = undefined;
 
   private nextStepStartPosition: Position | undefined;
 

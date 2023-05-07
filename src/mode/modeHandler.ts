@@ -152,7 +152,7 @@ export class ModeHandler implements vscode.Disposable, IModeHandler {
    *
    * We need to know when VSCode has updated our selection, so that we can sync
    * that internally. Unfortunately, VSCode has a habit of calling this
-   * function at weird times, or or with incomplete information, so we have to
+   * function at weird times, or with incomplete information, so we have to
    * do a lot of voodoo to make sure we're updating the cursors correctly.
    *
    * Even worse, we don't even know how to test this stuff.
@@ -165,7 +165,7 @@ export class ModeHandler implements vscode.Disposable, IModeHandler {
    * continuously up/down or left/right with and without remapped movement keys
    * because sometimes vscode lags behind and calls this function with information
    * that is not up to date with our selections yet and we need to make sure we don't
-   * change our cursors to previous information (this usally is only an issue in visual
+   * change our cursors to previous information (this usually is only an issue in visual
    * mode because of our different ways of handling selections and in those cases
    * updating our cursors with not up to date info might result in us changing our
    * cursor start position).
@@ -189,12 +189,19 @@ export class ModeHandler implements vscode.Disposable, IModeHandler {
       }`
     );
 
-    // If our previous cursors are not included on any of the current selections, then a snippet
-    // must have been inserted.
+    // If our previous cursors are not included in any of the current selections,
+    // then a snippet must have been inserted.
     const isSnippetSelectionChange = () => {
-      return e.selections.every((s) => {
-        return this.vimState.cursors.every((c) => !s.contains(new vscode.Range(c.start, c.stop)));
+      return e.selections.every((selection) => {
+        return this.vimState.cursors.every((cursor) => {
+          const cursorRange = new vscode.Range(cursor.start, cursor.stop);
+            return !selection.contains(cursorRange);
+        });
       });
+    };
+
+    const isCommandSelectionChange = () => {
+      return e.kind === vscode.TextEditorSelectionChangeKind.Command;
     };
 
     if (
@@ -233,14 +240,16 @@ export class ModeHandler implements vscode.Disposable, IModeHandler {
      */
     if (e.kind !== vscode.TextEditorSelectionChangeKind.Mouse) {
       if (selection) {
-        if (e.kind === vscode.TextEditorSelectionChangeKind.Command) {
+        if (isCommandSelectionChange()) {
           // This 'Command' kind is triggered when using a command like 'editor.action.smartSelect.grow'
           // but it is also triggered when we set the 'editor.selections' on 'updateView'.
           const allowedModes = [Mode.Normal, Mode.Visual];
+
           if (!isSnippetSelectionChange()) {
-            // if we just inserted a snippet then don't allow insert modes to go to visual mode
+            // If we just inserted a snippet, then don't allow insert modes to go to visual mode.
             allowedModes.push(Mode.Insert, Mode.Replace);
           }
+
           if (allowedModes.includes(this.vimState.currentMode)) {
             // Since the selections weren't ignored then probably we got change of selection from
             // a command, so we need to update our start and stop positions. This is where commands
@@ -274,7 +283,36 @@ export class ModeHandler implements vscode.Disposable, IModeHandler {
            * anchor because we need to move vscode anchor one to the right of our start when our start
            * is after our stop in order to include the start character on vscodes selection.
            */
-          return;
+
+          // TODO(bselwe): This is a temporary workaround for handling certain snippets, e.g. Flutter "Wrap with" snippets.
+          //
+          // We need to know if the current selection event is associated with adding a Flutter snippet.
+          // For this, we are checking if the document content has changed within the last 100 ms
+          // as this selection event happens just after the snippet insertion. If that's the case,
+          // we are assuming that the current event is associated with a snippet insertion.
+          //
+          // This might cause some unexpected behavior if the selection changes within 100 ms after
+          // document content changes, but we haven't found any issues with this approach so far.
+          const { historyTracker } = this.vimState;
+          const lastContentChanges = historyTracker.lastContentChanges?.changes;
+          const lastContentChangesTimestamp = historyTracker.lastContentChanges?.timestamp;
+          const currentTimestamp = new Date();
+          const hasContentJustChanged = lastContentChanges && lastContentChangesTimestamp && currentTimestamp.getTime() - lastContentChangesTimestamp.getTime() <= 100;
+
+          // If the content has just changed, then we continue with updating the cursor position.
+          if (hasContentJustChanged) {
+            // Set normal cursor mode.
+            this.vimState.setCurrentMode(Mode.Normal);
+
+            // Force an undo point to be created.
+            historyTracker.currentContentChanges =
+              (historyTracker.currentContentChanges ?? []).concat(lastContentChanges);
+            historyTracker.addChange(true);
+            historyTracker.finishCurrentStep();
+          } else {
+            // Otherwise, we ignore the current selection event.
+            return;
+          }
         }
 
         const cursorEnd = laterOf(
